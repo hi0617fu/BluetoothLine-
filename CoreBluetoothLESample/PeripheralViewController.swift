@@ -13,29 +13,42 @@ class PeripheralViewController: UIViewController {
 
     @IBOutlet var textView: UITextView!
     @IBOutlet var advertisingSwitch: UISwitch!
+    @IBOutlet var inputTextField: UITextField!
+    @IBOutlet var sendButton: UIButton!
+    @IBOutlet weak var scrollView: UIScrollView!
     
     var peripheralManager: CBPeripheralManager!
-
-    var transferCharacteristic: CBMutableCharacteristic?
+    var transferCharacteristic_Rx: CBMutableCharacteristic?
+    var transferCharacteristic_Tx: CBMutableCharacteristic?
     var connectedCentral: CBCentral?
+    var peripheral: CBPeripheral!
     var dataToSend = Data()
     var sendDataIndex: Int = 0
+    private var consoleAsciiText: NSAttributedString? = NSAttributedString(string: "")
     
     // MARK: - View Lifecycle
     
     override func viewDidLoad() {
         peripheralManager = CBPeripheralManager(delegate: self, queue: nil, options: [CBPeripheralManagerOptionShowPowerAlertKey: true])
         super.viewDidLoad()
+        textView.isUserInteractionEnabled = true
+        textView.isEditable = false
+        textView.isSelectable = false
 
     }
     
     override func viewWillDisappear(_ animated: Bool) {
         // Don't keep advertising going while we're not showing.
         peripheralManager.stopAdvertising()
-
         super.viewWillDisappear(animated)
     }
     
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        self.view.endEditing(true)
+    }
+    
+    @IBAction func getText(sender: UITextField) {
+    }
     // MARK: - Switch Methods
 
     @IBAction func switchChanged(_ sender: Any) {
@@ -44,6 +57,51 @@ class PeripheralViewController: UIViewController {
             peripheralManager.startAdvertising([CBAdvertisementDataServiceUUIDsKey: [TransferService.serviceUUID]])
         } else {
             peripheralManager.stopAdvertising()
+        }
+    }
+    
+    @IBAction func clickSendAction(_ sender: AnyObject) {
+        outgoingData()
+    }
+    
+    func outgoingData() {
+        let appendString = "\n"
+        let inputText = inputTextField.text
+        let myFont = UIFont(name: "Helvetica Neue", size: 15.0)
+        let myAttributes1 = [convertFromNSAttributedStringKey(NSAttributedString.Key.font): myFont!, convertFromNSAttributedStringKey(NSAttributedString.Key.foregroundColor): UIColor.blue]
+        writeValue(data: inputText!)
+        let attribString = NSAttributedString(string: "[Peripheral]: " + inputText! + appendString, attributes: convertToOptionalNSAttributedStringKeyDictionary(myAttributes1))
+        let newAsciiText = NSMutableAttributedString(attributedString: self.consoleAsciiText!)
+        newAsciiText.append(attribString)
+        
+        consoleAsciiText = newAsciiText
+        textView.attributedText = consoleAsciiText
+        inputTextField.text = ""
+    }
+    
+    func writeValue(data: String) {
+        let valueString = (data as NSString).data(using: String.Encoding.utf8.rawValue)
+        if let discoveredPeripheral = discoveredPeripheral {
+            if let txCharacteristic = txCharacteristic {
+                discoveredPeripheral.writeValue(valueString!, for: txCharacteristic, type: CBCharacteristicWriteType.withResponse)
+            }
+        }
+    }
+    
+    func updateIncomingData() {
+        NotificationCenter.default.addObserver(forName: NSNotification.Name(rawValue: "Notify"), object: nil , queue: nil){
+            notification in
+            let appendString = "\n"
+            let myFont = UIFont(name: "Helvetica Neue", size: 15.0)
+            let myAttributes2 = [convertFromNSAttributedStringKey(NSAttributedString.Key.font): myFont!, convertFromNSAttributedStringKey(NSAttributedString.Key.foregroundColor): UIColor.red]
+            let attribString = NSAttributedString(string: "[Central]: " + (characteristicASCIIValue as String) + appendString, attributes: convertToOptionalNSAttributedStringKeyDictionary(myAttributes2))
+            let newAsciiText = NSMutableAttributedString(attributedString: self.consoleAsciiText!)
+            self.textView.attributedText = NSAttributedString(string: characteristicASCIIValue as String , attributes: convertToOptionalNSAttributedStringKeyDictionary(myAttributes2))
+            
+            newAsciiText.append(attribString)
+            
+            self.consoleAsciiText = newAsciiText
+            self.textView.attributedText = self.consoleAsciiText
         }
     }
 
@@ -56,7 +114,8 @@ class PeripheralViewController: UIViewController {
     
     private func sendData() {
 		
-		guard let transferCharacteristic = transferCharacteristic else {
+		guard let transferCharacteristic = transferCharacteristic_Tx
+        else {
 			return
 		}
 		
@@ -133,23 +192,20 @@ class PeripheralViewController: UIViewController {
         // Build our service.
         
         // Start with the CBMutableCharacteristic.
-        let transferCharacteristic = CBMutableCharacteristic(type: TransferService.characteristicUUID,
-                                                         properties: [.notify, .writeWithoutResponse],
-                                                         value: nil,
-                                                         permissions: [.readable, .writeable])
+        let transferCharacteristic_Tx = CBMutableCharacteristic(type: TransferService.characteristic_Tx_UUID, properties: [.notify, .writeWithoutResponse], value: nil, permissions: [.readable, .writeable])
         
         // Create a service from the characteristic.
         let transferService = CBMutableService(type: TransferService.serviceUUID, primary: true)
-        
+        let transferCharacteristic_Rx  =  CBMutableCharacteristic(type: TransferService.characteristic_Rx_UUID, properties: [.read, .notify], value: nil, permissions: [.readable, .writeable])
         // Add the characteristic to the service.
-        transferService.characteristics = [transferCharacteristic]
+        transferService.characteristics = [transferCharacteristic_Rx, transferCharacteristic_Tx]
         
         // And add it to the peripheral manager.
         peripheralManager.add(transferService)
         
         // Save the characteristic for later.
-        self.transferCharacteristic = transferCharacteristic
-
+        self.transferCharacteristic_Tx = transferCharacteristic_Tx
+        self.transferCharacteristic_Rx = transferCharacteristic_Rx
     }
 }
 
@@ -280,6 +336,12 @@ extension PeripheralViewController: UITextViewDelegate {
     /*
      *  Adds the 'Done' button to the title bar
      */
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        textField.resignFirstResponder()
+        outgoingData()
+        return(true)
+    }
+    
     func textViewDidBeginEditing(_ textView: UITextView) {
         // We need to add this manually so we have a way to dismiss the keyboard
         let rightButton = UIBarButtonItem(title: "Done", style: .done, target: self, action: #selector(dismissKeyboard))
@@ -295,5 +357,14 @@ extension PeripheralViewController: UITextViewDelegate {
         navigationItem.rightBarButtonItem = nil
     }
     
+}
+fileprivate func convertFromNSAttributedStringKey(_ input: NSAttributedString.Key) -> String {
+    return input.rawValue
+}
+
+// Helper function inserted by Swift 4.2 migrator.
+fileprivate func convertToOptionalNSAttributedStringKeyDictionary(_ input: [String: Any]?) -> [NSAttributedString.Key: Any]? {
+    guard let input = input else { return nil }
+    return Dictionary(uniqueKeysWithValues: input.map { key, value in (NSAttributedString.Key(rawValue: key), value)})
 }
 

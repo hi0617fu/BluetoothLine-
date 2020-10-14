@@ -9,17 +9,25 @@ import UIKit
 import CoreBluetooth
 import os
 
+var rxCharacteristic: CBCharacteristic?
+var txCharacteristic: CBCharacteristic?
+var characteristicASCIIValue = NSString()
+var discoveredPeripheral:  CBPeripheral?
+
 class CentralViewController: UIViewController {
     // UIViewController overrides, properties specific to this class, private helper methods, etc.
 
     @IBOutlet var textView: UITextView!
+    @IBOutlet var inputTextField: UITextField!
+    @IBOutlet var sendButton: UIButton!
+    @IBOutlet weak var scrollView: UIScrollView!
 
     var centralManager: CBCentralManager!
-
-    var discoveredPeripheral: CBPeripheral?
+    var peripheralManager: CBPeripheralManager?
     var transferCharacteristic: CBCharacteristic?
     var writeIterationsComplete = 0
     var connectionIterationsComplete = 0
+    private var consoleAsciiText: NSAttributedString? = NSAttributedString(string: "")
     
     let defaultIterations = 5     // change this value based on test usecase
     
@@ -30,7 +38,28 @@ class CentralViewController: UIViewController {
     override func viewDidLoad() {
         centralManager = CBCentralManager(delegate: self, queue: nil, options: [CBCentralManagerOptionShowPowerAlertKey: true])
         super.viewDidLoad()
-
+        textView.isUserInteractionEnabled = true
+        textView.isEditable = false
+        textView.isSelectable = false
+        updateIncomingData()
+    }
+    
+    func updateIncomingData() {
+        NotificationCenter.default.addObserver(forName: NSNotification.Name(rawValue: "Notify"), object: nil , queue: nil){
+            notification in
+            let appendString = "\n"
+            let myFont = UIFont(name: "Helvetica Neue", size: 15.0)
+            let myAttributes2 = [convertFromNSAttributedStringKey(NSAttributedString.Key.font): myFont!, convertFromNSAttributedStringKey(NSAttributedString.Key.foregroundColor): UIColor.red]
+            let attribString = NSAttributedString(string: "[Peripheral]: " + (characteristicASCIIValue as String) + appendString, attributes: convertToOptionalNSAttributedStringKeyDictionary(myAttributes2))
+            let newAsciiText = NSMutableAttributedString(attributedString: self.consoleAsciiText!)
+            self.textView.attributedText = NSAttributedString(string: characteristicASCIIValue as String , attributes: convertToOptionalNSAttributedStringKeyDictionary(myAttributes2))
+            
+            newAsciiText.append(attribString)
+            
+            self.consoleAsciiText = newAsciiText
+            self.textView.attributedText = self.consoleAsciiText
+            
+        }
     }
 	
     override func viewWillDisappear(_ animated: Bool) {
@@ -57,7 +86,7 @@ class CentralViewController: UIViewController {
         
         if let connectedPeripheral = connectedPeripherals.last {
             os_log("Connecting to peripheral %@", connectedPeripheral)
-			self.discoveredPeripheral = connectedPeripheral
+			discoveredPeripheral = connectedPeripheral
             centralManager.connect(connectedPeripheral, options: nil)
         } else {
             // We were not connected to our counterpart, so start scanning
@@ -78,9 +107,9 @@ class CentralViewController: UIViewController {
         
         for service in (discoveredPeripheral.services ?? [] as [CBService]) {
             for characteristic in (service.characteristics ?? [] as [CBCharacteristic]) {
-                if characteristic.uuid == TransferService.characteristicUUID && characteristic.isNotifying {
+                if characteristic.uuid == TransferService.characteristic_Rx_UUID && characteristic.isNotifying {
                     // It is notifying, so unsubscribe
-                    self.discoveredPeripheral?.setNotifyValue(false, for: characteristic)
+                    discoveredPeripheral.setNotifyValue(false, for: characteristic)
                 }
             }
         }
@@ -88,7 +117,39 @@ class CentralViewController: UIViewController {
         // If we've gotten this far, we're connected, but we're not subscribed, so we just disconnect
         centralManager.cancelPeripheralConnection(discoveredPeripheral)
     }
-    
+    @IBAction func clickSendAction(_ sender: AnyObject) {
+        outgoingData()
+    }
+    func outgoingData() {
+        let appendString = "\n"
+        
+        let inputText = inputTextField.text
+        
+        let myFont = UIFont(name: "Helvetica Neue", size: 15.0)
+        let myAttributes1 = [convertFromNSAttributedStringKey(NSAttributedString.Key.font): myFont!, convertFromNSAttributedStringKey(NSAttributedString.Key.foregroundColor): UIColor.blue]
+        
+        writeValue(data: inputText!)
+        
+        let attribString = NSAttributedString(string: "[Central]: " + inputText! + appendString, attributes: convertToOptionalNSAttributedStringKeyDictionary(myAttributes1))
+        let newAsciiText = NSMutableAttributedString(attributedString: self.consoleAsciiText!)
+        newAsciiText.append(attribString)
+        
+        consoleAsciiText = newAsciiText
+        textView.attributedText = consoleAsciiText
+        //erase what's in the text field
+        inputTextField.text = ""
+    }
+    @IBAction func getText(sender: UITextField) {
+    }
+    func writeValue(data: String) {
+        let valueString = (data as NSString).data(using: String.Encoding.utf8.rawValue)
+        if let discoveredPeripheral = discoveredPeripheral {
+            if let txCharacteristic = txCharacteristic {
+                discoveredPeripheral.writeValue(valueString!, for: txCharacteristic, type: CBCharacteristicWriteType.withResponse)
+            }
+        }
+    }
+
     /*
      *  Write some test data to peripheral
      */
@@ -287,7 +348,7 @@ extension CentralViewController: CBPeripheralDelegate {
         // Loop through the newly filled peripheral.services array, just in case there's more than one.
         guard let peripheralServices = peripheral.services else { return }
         for service in peripheralServices {
-            peripheral.discoverCharacteristics([TransferService.characteristicUUID], for: service)
+            peripheral.discoverCharacteristics([TransferService.characteristic_Rx_UUID, TransferService.characteristic_Tx_UUID], for: service)
         }
     }
     
@@ -305,7 +366,7 @@ extension CentralViewController: CBPeripheralDelegate {
         
         // Again, we loop through the array, just in case and check if it's the right one
         guard let serviceCharacteristics = service.characteristics else { return }
-        for characteristic in serviceCharacteristics where characteristic.uuid == TransferService.characteristicUUID {
+        for characteristic in serviceCharacteristics where characteristic.uuid == TransferService.characteristic_Tx_UUID {
             // If it is, subscribe to it
             transferCharacteristic = characteristic
             peripheral.setNotifyValue(true, for: characteristic)
@@ -358,7 +419,7 @@ extension CentralViewController: CBPeripheralDelegate {
         }
         
         // Exit if it's not the transfer characteristic
-        guard characteristic.uuid == TransferService.characteristicUUID else { return }
+        guard characteristic.uuid == TransferService.characteristic_Rx_UUID else { return }
         
         if characteristic.isNotifying {
             // Notification has started
@@ -378,5 +439,19 @@ extension CentralViewController: CBPeripheralDelegate {
         os_log("Peripheral is ready, send data")
         writeData()
     }
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        textField.resignFirstResponder()
+        outgoingData()
+        return(true)
+    }
     
+}
+fileprivate func convertFromNSAttributedStringKey(_ input: NSAttributedString.Key) -> String {
+    return input.rawValue
+}
+
+// Helper function inserted by Swift 4.2 migrator.
+fileprivate func convertToOptionalNSAttributedStringKeyDictionary(_ input: [String: Any]?) -> [NSAttributedString.Key: Any]? {
+    guard let input = input else { return nil }
+    return Dictionary(uniqueKeysWithValues: input.map { key, value in (NSAttributedString.Key(rawValue: key), value)})
 }
