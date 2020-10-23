@@ -34,7 +34,7 @@ class PeripheralViewController: UIViewController {
         textView.isUserInteractionEnabled = true
         textView.isEditable = false
         textView.isSelectable = false
-
+        updateIncomingData()
     }
     
     override func viewWillDisappear(_ animated: Bool) {
@@ -284,6 +284,7 @@ extension PeripheralViewController: CBPeripheralManagerDelegate {
         
         // Start sending
         sendData()
+        updateIncomingData()
     }
     
     /*
@@ -315,6 +316,7 @@ extension PeripheralViewController: CBPeripheralManagerDelegate {
             
             os_log("Received write request of %d bytes: %s", requestValue.count, stringFromData)
             self.textView.text = stringFromData
+            updateIncomingData()
         }
     }
 }

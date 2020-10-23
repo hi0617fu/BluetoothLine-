@@ -405,6 +405,7 @@ extension CentralViewController: CBPeripheralDelegate {
         } else {
             // Otherwise, just append the data to what we have previously received.
             data.append(characteristicData)
+            updateIncomingData()
         }
     }
 
@@ -438,6 +439,7 @@ extension CentralViewController: CBPeripheralDelegate {
     func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
         os_log("Peripheral is ready, send data")
         writeData()
+        updateIncomingData()
     }
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         textField.resignFirstResponder()
